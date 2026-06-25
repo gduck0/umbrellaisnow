@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <style name="Base.Theme.Umbrella" parent="Theme.Material3.Light.NoActionBar">
+        <item name="android:windowBackground">#FFFFFF</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
+    </style>
+
+    <style name="Theme.Umbrella" parent="Base.Theme.Umbrella" />
+
+</resources>

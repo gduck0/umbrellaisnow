@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">우산있나우</string>
+    <string name="title_payment">포인트 충전</string>
+    <string name="label_current_point">현재 보유 포인트</string>
+    <string name="label_charge_amount_select">충전 금액 선택</string>
+    <string name="label_payment_method">결제 수단</string>
+    <string name="btn_charge_action">%,d원 충전하기</string>
+    <string name="charge_3000_desc">3,000원 충전 (보증금)</string>
+    <string name="charge_3000_amount">3,000P</string>
+
+    <string name="greeting_format">안녕하세요,\n%1$s님! ☂️</string>
+    <string name="deposit_info_format">🔒 보관 중인 보증금: %,d원</string>
+    <string name="renting_status_format">대여 중: %1$s %2$d번</string>
+    <string name="no_rental_status">현재 대여 중인 우산이 없습니다.</string>
+
+    <string name="slot_number_format">%1$d번</string>
+    <string name="btn_rent_format">%1$d번 우산 대여하기</string>
+    <string name="slot_empty">비어있음</string>
+    <string name="slot_broken">🔧 고장</string>
+    <string name="msg_broken_slot">고장 수리 중인 슬롯입니다.</string>
+</resources>
