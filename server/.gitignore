@@ -1,0 +1,27 @@
+# 환경 변수와 로컬 설정
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 로컬 데이터
+*.db
+*.sqlite
+*.sqlite3
+data/*
+!data/.gitkeep
+
+# 로그와 운영체제/편집기 파일
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
