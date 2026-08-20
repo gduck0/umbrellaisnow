@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from .config import get_settings
-from .database import get_db, init_db, one
+from .database import get_db, init_db, many, one
 from .repository import (
     all_slots_with_location,
     list_rentals,
@@ -15,6 +15,7 @@ from .repository import (
     require_rental,
     require_user,
     row_to_dict,
+    rows_to_dicts,
     slot_with_location,
 )
 from .schemas import (
