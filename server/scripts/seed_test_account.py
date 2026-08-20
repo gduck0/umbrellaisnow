@@ -27,8 +27,8 @@ def main() -> None:
         if existing is None:
             cursor = conn.execute(
                 """
-                INSERT INTO users (email, name, phone, password_hash, balance, created_at)
-                VALUES (?, ?, NULL, ?, ?, ?)
+                INSERT INTO users (email, name, phone, password_hash, role, balance, created_at)
+                VALUES (?, ?, NULL, ?, 'admin', ?, ?)
                 """,
                 (TEST_ID, TEST_NAME, hash_password(TEST_PASSWORD), TEST_BALANCE, now),
             )
@@ -48,6 +48,7 @@ def main() -> None:
                 UPDATE users
                 SET name = ?,
                     password_hash = ?,
+                    role = 'admin',
                     balance = CASE WHEN balance < ? THEN ? ELSE balance END
                 WHERE id = ?
                 """,

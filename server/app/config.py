@@ -20,7 +20,10 @@ class Settings(BaseSettings):
     payments_enabled: bool = False
     session_ttl_hours: int = 24
     remember_session_ttl_hours: int = 24 * 30
+    hardware_api_key: str | None = None
+    allow_user_hardware_simulation: bool = True
 
+    local_only: bool = False
     allow_test_client: bool = True
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "::1", "localhost")
     cors_origins: tuple[str, ...] = (
