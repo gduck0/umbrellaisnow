@@ -19,6 +19,12 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def secrets_match(candidate: str | None, expected: str | None) -> bool:
+    if not candidate or not expected:
+        return False
+    return hmac.compare_digest(candidate.encode("utf-8"), expected.encode("utf-8"))
+
+
 def hash_password(password: str) -> str:
     iterations = 210_000
     salt = token_hex(16)

@@ -75,6 +75,8 @@ python scripts\seed_test_account.py
 Authorization: Bearer <access_token>
 ```
 
+이 계정은 DB의 `admin` 역할로 저장되어 관리자·슬롯 점검 API에 사용할 수 있다. 실제 하드웨어를 연결할 때는 `UMBRELLA_HARDWARE_API_KEY`를 설정하고 `UMBRELLA_ALLOW_USER_HARDWARE_SIMULATION=false`로 사용자 시뮬레이션을 끈다.
+
 ## DB
 
 - 로컬 DB: `data/umbrella.db`

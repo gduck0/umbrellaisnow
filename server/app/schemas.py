@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 SlotStatus = Literal["available", "occupied", "disabled"]
@@ -43,6 +43,7 @@ class UserOut(BaseModel):
     email: str | None = None
     name: str
     phone: str | None
+    role: Literal["user", "admin"] = "user"
     balance: int
     created_at: str
 
@@ -55,9 +56,15 @@ class AuthOut(BaseModel):
 
 
 class RechargeRequest(BaseModel):
-    # [수정] gt=0 → ne=0 으로 변경: 음수(환불)도 허용, 0만 불가
-    amount: int = Field(ne=0, le=1_000_000, ge=-1_000_000)
+    amount: int = Field(le=1_000_000, ge=-1_000_000)
     note: str | None = Field(default=None, max_length=200)
+
+    @field_validator("amount")
+    @classmethod
+    def amount_must_not_be_zero(cls, value: int) -> int:
+        if value == 0:
+            raise ValueError("amount must not be zero")
+        return value
 
 
 class WalletOut(BaseModel):

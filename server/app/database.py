@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     phone TEXT UNIQUE,
     password_hash TEXT,
+    role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
     balance INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
@@ -153,6 +154,12 @@ def init_db() -> None:
 def migrate_db(conn: sqlite3.Connection) -> None:
     add_column_if_missing(conn, "users", "email", "TEXT")
     add_column_if_missing(conn, "users", "password_hash", "TEXT")
+    add_column_if_missing(
+        conn,
+        "users",
+        "role",
+        "TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin'))",
+    )
     add_column_if_missing(conn, "slots", "location_id", "INTEGER REFERENCES locations(id)")
     add_column_if_missing(conn, "slots", "slot_number", "INTEGER")
     add_column_if_missing(conn, "slots", "report_reason", "TEXT")

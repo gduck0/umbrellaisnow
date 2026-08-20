@@ -2,7 +2,7 @@
 
 Base URL: `http://127.0.0.1:8000`
 
-모든 API는 localhost 요청만 허용합니다.
+개발 기본값에서는 Android 앱과 로컬 시뮬레이터 연결을 허용합니다. 외부 공개 배포 전에는 아래 인증 경계를 적용하고, 필요하면 `UMBRELLA_LOCAL_ONLY=true`로 허용된 로컬 호스트 요청만 받습니다.
 
 ## 화면 기준 앱 흐름
 
@@ -28,6 +28,10 @@ Authorization: Bearer <access_token>
 ```
 
 토큰은 서버 DB에는 원문이 아니라 SHA-256 해시로 저장됩니다. 로그아웃하면 해당 세션의 `revoked_at`이 기록되어 더 이상 사용할 수 없습니다.
+
+- 사용자·지갑·대여 상세 API는 본인 또는 `admin` 역할만 접근할 수 있습니다.
+- 관리자·슬롯 점검 API는 `admin` 역할의 Bearer 토큰이 필요합니다.
+- 하드웨어 API는 `X-Hardware-Key`를 지원합니다. 실제 장비를 연결할 때 `UMBRELLA_HARDWARE_API_KEY`를 설정하고 `UMBRELLA_ALLOW_USER_HARDWARE_SIMULATION=false`로 사용자 시뮬레이션을 끕니다.
 
 ## 상태 값
 
@@ -115,6 +119,7 @@ Authorization: Bearer <access_token>
 ```
 
 이 API는 외부 결제 없이 로컬 개발 테스트용으로 포인트를 넣는 용도입니다.
+본인 또는 `admin` 역할의 Bearer 토큰이 필요하며 실제 결제와 연결되지 않습니다.
 
 ### 결제 상태
 
@@ -217,9 +222,13 @@ Authorization: Bearer <access_token>
 
 `POST /api/maintenance/slots/{slot_id}/disable`
 
+`admin` 역할의 Bearer 토큰이 필요합니다.
+
 ### 슬롯 재활성화
 
 `POST /api/maintenance/slots/{slot_id}/enable`
+
+`admin` 역할의 Bearer 토큰이 필요합니다.
 
 ```json
 {
@@ -251,6 +260,12 @@ Authorization: Bearer <access_token>
 
 `POST /api/hardware/qr/scan`
 
+운영 장비 헤더:
+
+```http
+X-Hardware-Key: <device-secret>
+```
+
 ```json
 {
   "token": "qr-token-from-app",
@@ -263,6 +278,8 @@ Authorization: Bearer <access_token>
 ### 하드웨어: IR 인출 감지
 
 `POST /api/hardware/slots/1/sensor`
+
+운영 장비는 같은 `X-Hardware-Key` 헤더를 사용합니다.
 
 ```json
 {

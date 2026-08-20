@@ -46,7 +46,7 @@ from .schemas import (
     UserOut,
     WalletOut,
 )
-from .security import LocalOnlyMiddleware
+from .security import LocalOnlyMiddleware, secrets_match
 from .services import (
     authenticate_session,
     create_user,
@@ -82,7 +82,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
-# app.add_middleware(LocalOnlyMiddleware)
+if settings.local_only:
+    app.add_middleware(LocalOnlyMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
@@ -101,13 +102,41 @@ def db():
         conn.close()
 
 
-def current_user(authorization: str | None = Header(default=None), conn=Depends(db)):
+def authenticate_bearer(authorization: str | None, conn):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
         raise HTTPException(status_code=401, detail="Missing bearer token")
     return authenticate_session(conn, token=token)
+
+
+def current_user(authorization: str | None = Header(default=None), conn=Depends(db)):
+    return authenticate_bearer(authorization, conn)
+
+
+def require_admin(user=Depends(current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def require_user_access(user_id: int, user) -> None:
+    if user["role"] != "admin" and user["id"] != user_id:
+        raise HTTPException(status_code=403, detail="User resource access denied")
+
+
+def require_hardware_access(
+    x_hardware_key: str | None = Header(default=None, alias="X-Hardware-Key"),
+    authorization: str | None = Header(default=None),
+    conn=Depends(db),
+):
+    current_settings = get_settings()
+    if secrets_match(x_hardware_key, current_settings.hardware_api_key):
+        return None
+    if current_settings.allow_user_hardware_simulation:
+        return authenticate_bearer(authorization, conn)
+    raise HTTPException(status_code=401, detail="Invalid hardware credentials")
 
 
 @app.get("/", include_in_schema=False)
@@ -121,7 +150,7 @@ def api_info():
         "name": settings.app_name,
         "docs": "/docs",
         "health": "/health",
-        "local_only": True,
+        "local_only": settings.local_only,
     }
 
 
@@ -165,22 +194,25 @@ def get_my_wallet(user=Depends(current_user), conn=Depends(db)):
 
 
 @app.post("/api/users", response_model=UserOut, status_code=201)
-def create_user_endpoint(payload: UserCreate, conn=Depends(db)):
+def create_user_endpoint(payload: UserCreate, _admin=Depends(require_admin), conn=Depends(db)):
     return create_user(conn, name=payload.name, phone=payload.phone, email=payload.email)
 
 
 @app.get("/api/users/{user_id}", response_model=UserOut)
-def get_user(user_id: int, conn=Depends(db)):
+def get_user(user_id: int, user=Depends(current_user), conn=Depends(db)):
+    require_user_access(user_id, user)
     return row_to_dict(require_user(conn, user_id))
 
 
 @app.post("/api/users/{user_id}/wallet/recharge", response_model=WalletOut)
-def recharge_wallet_endpoint(user_id: int, payload: RechargeRequest, conn=Depends(db)):
+def recharge_wallet_endpoint(user_id: int, payload: RechargeRequest, user=Depends(current_user), conn=Depends(db)):
+    require_user_access(user_id, user)
     return recharge_wallet(conn, user_id=user_id, amount=payload.amount, note=payload.note)
 
 
 @app.get("/api/users/{user_id}/wallet", response_model=WalletOut)
-def get_wallet(user_id: int, conn=Depends(db)):
+def get_wallet(user_id: int, user=Depends(current_user), conn=Depends(db)):
+    require_user_access(user_id, user)
     return wallet(conn, user_id=user_id)
 
 
@@ -252,22 +284,32 @@ def create_return_qr(payload: ReturnQrRequest, user=Depends(current_user), conn=
 
 
 @app.post("/api/hardware/qr/scan", response_model=HardwareScanOut)
-def hardware_scan_qr(payload: HardwareScanRequest, conn=Depends(db)):
+def hardware_scan_qr(payload: HardwareScanRequest, _access=Depends(require_hardware_access), conn=Depends(db)):
     return scan_qr(conn, token=payload.token)
 
 
 @app.post("/api/hardware/slots/{slot_id}/sensor", response_model=SensorEventOut)
-def hardware_sensor_event(slot_id: int, payload: SensorEventRequest, conn=Depends(db)):
+def hardware_sensor_event(
+    slot_id: int,
+    payload: SensorEventRequest,
+    _access=Depends(require_hardware_access),
+    conn=Depends(db),
+):
     return handle_sensor_event(conn, slot_id=slot_id, present=payload.present)
 
 
 @app.get("/api/rentals")
-def get_rentals(user_id: int | None = Query(default=None), conn=Depends(db)):
+def get_rentals(user_id: int | None = Query(default=None), user=Depends(current_user), conn=Depends(db)):
+    if user_id is None and user["role"] != "admin":
+        user_id = user["id"]
+    elif user_id is not None:
+        require_user_access(user_id, user)
     return list_rentals(conn, user_id=user_id)
 
 
 @app.get("/api/rentals/active")
-def get_active_rental(user_id: int = Query(...), conn=Depends(db)):
+def get_active_rental(user_id: int = Query(...), user=Depends(current_user), conn=Depends(db)):
+    require_user_access(user_id, user)
     rental = one(
         conn,
         """
@@ -301,8 +343,9 @@ def get_my_active_rental(user=Depends(current_user), conn=Depends(db)):
 
 
 @app.get("/api/rentals/{rental_id}")
-def get_rental(rental_id: int, conn=Depends(db)):
-    require_rental(conn, rental_id)
+def get_rental(rental_id: int, user=Depends(current_user), conn=Depends(db)):
+    rental = require_rental(conn, rental_id)
+    require_user_access(rental["user_id"], user)
     return rental_detail(conn, rental_id)
 
 
@@ -338,37 +381,44 @@ def report_slot_issue_endpoint(slot_id: int, payload: SlotReportRequest, user=De
 
 
 @app.post("/api/maintenance/slots/{slot_id}/enable", response_model=SlotOut)
-def enable_slot_endpoint(slot_id: int, payload: SlotMaintenanceRequest, conn=Depends(db)):
+def enable_slot_endpoint(
+    slot_id: int,
+    payload: SlotMaintenanceRequest,
+    _admin=Depends(require_admin),
+    conn=Depends(db),
+):
     return enable_slot(conn, slot_id=slot_id, umbrella_present=payload.umbrella_present)
 
 
 @app.post("/api/maintenance/slots/{slot_id}/disable", response_model=SlotOut)
-def disable_slot_endpoint(slot_id: int, conn=Depends(db)):
+def disable_slot_endpoint(slot_id: int, _admin=Depends(require_admin), conn=Depends(db)):
     return disable_slot(conn, slot_id=slot_id)
 
 
 # ── 관리자 API ───────────────────────────────────────────────
-# 별도 인증 없이 앱 내부에서만 접근 (관리자 비밀번호는 앱에서 검증)
-# 실제 서비스라면 admin 전용 토큰 인증이 필요함
+# DB에 admin 역할이 지정된 로그인 사용자만 접근
 
 @app.get("/api/admin/users")
-def admin_get_all_users(conn=Depends(db)):
-    users = many(conn, "SELECT id, email, name, phone, balance, created_at FROM users ORDER BY created_at DESC")
+def admin_get_all_users(_admin=Depends(require_admin), conn=Depends(db)):
+    users = many(
+        conn,
+        "SELECT id, email, name, phone, role, balance, created_at FROM users ORDER BY created_at DESC",
+    )
     return rows_to_dicts(users)
 
 
 @app.get("/api/admin/users/search")
-def admin_search_user(email: str = Query(...), conn=Depends(db)):
+def admin_search_user(email: str = Query(...), _admin=Depends(require_admin), conn=Depends(db)):
     users = many(
         conn,
-        "SELECT id, email, name, phone, balance, created_at FROM users WHERE email LIKE ?",
+        "SELECT id, email, name, phone, role, balance, created_at FROM users WHERE email LIKE ?",
         (f"%{email}%",),
     )
     return rows_to_dicts(users)
 
 
 @app.delete("/api/admin/users/{user_id}", status_code=204)
-def admin_delete_user(user_id: int, conn=Depends(db)):
+def admin_delete_user(user_id: int, _admin=Depends(require_admin), conn=Depends(db)):
     require_user(conn, user_id)
     # 진행 중 대여가 있으면 삭제 불가
     active = one(
