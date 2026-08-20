@@ -28,7 +28,7 @@ app 쪽 주요 파일:
 - `services.py` - 대여/반납 등 비즈니스 로직
 - `repository.py` - DB 조회와 저장
 - `schemas.py` - 요청/응답 구조
-- `security.py` - 비밀번호와 JWT 처리
+- `security.py` - 비밀번호 해시와 불투명 세션 토큰 처리
 - `database.py` - SQLite 연결과 초기 데이터
 
 ## 실행
@@ -58,7 +58,7 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-GitHub에 코드를 올리면 같은 테스트가 자동으로 실행된다.
+GitHub에 코드를 올리면 Ubuntu와 Windows에서 같은 테스트가 자동으로 실행된다.
 
 ## 테스트 계정
 
