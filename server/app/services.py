@@ -5,7 +5,7 @@ import sqlite3
 from fastapi import HTTPException
 
 from .config import get_settings
-from .database import many, one
+from .database import begin_immediate, many, one
 from .repository import (
     active_rental_for_user,
     active_rental_detail_for_user,
@@ -247,6 +247,7 @@ def report_slot_issue(
 
 
 def issue_rent_qr(conn: sqlite3.Connection, *, user_id: int, slot_id: int) -> dict:
+    begin_immediate(conn)
     settings = get_settings()
     user = require_user(conn, user_id)
     slot = require_slot(conn, slot_id)
@@ -258,6 +259,19 @@ def issue_rent_qr(conn: sqlite3.Connection, *, user_id: int, slot_id: int) -> di
     if active_rental_for_user(conn, user_id) is not None:
         raise HTTPException(status_code=409, detail="User already has an active rental")
 
+    now = utc_now_iso()
+    conn.execute(
+        """
+        UPDATE qr_tokens
+        SET revoked_at = ?
+        WHERE action = 'rent'
+          AND used_at IS NULL
+          AND revoked_at IS NULL
+          AND (user_id = ? OR slot_id = ?)
+        """,
+        (now, user_id, slot_id),
+    )
+
     token = create_token()
     expires_at = add_seconds(settings.qr_ttl_seconds)
     conn.execute(
@@ -265,7 +279,7 @@ def issue_rent_qr(conn: sqlite3.Connection, *, user_id: int, slot_id: int) -> di
         INSERT INTO qr_tokens (token_hash, action, user_id, slot_id, rental_id, expires_at, created_at)
         VALUES (?, 'rent', ?, ?, NULL, ?, ?)
         """,
-        (hash_token(token), user_id, slot_id, expires_at, utc_now_iso()),
+        (hash_token(token), user_id, slot_id, expires_at, now),
     )
     slot_meta = slot_with_location(conn, slot_id)
     return {
@@ -283,6 +297,7 @@ def issue_rent_qr(conn: sqlite3.Connection, *, user_id: int, slot_id: int) -> di
 
 
 def issue_return_qr(conn: sqlite3.Connection, *, user_id: int, rental_id: int | None, return_type: str = "normal") -> dict:
+    begin_immediate(conn)
     settings = get_settings()
     require_user(conn, user_id)
 
@@ -294,6 +309,19 @@ def issue_return_qr(conn: sqlite3.Connection, *, user_id: int, rental_id: int | 
     if return_type not in ("normal", "damage_report"):
         raise HTTPException(status_code=400, detail="Unsupported return type")
 
+    now = utc_now_iso()
+    conn.execute(
+        """
+        UPDATE qr_tokens
+        SET revoked_at = ?
+        WHERE action = 'return'
+          AND rental_id = ?
+          AND used_at IS NULL
+          AND revoked_at IS NULL
+        """,
+        (now, rental["id"]),
+    )
+
     token = create_token()
     expires_at = add_seconds(settings.qr_ttl_seconds)
     conn.execute(
@@ -301,7 +329,7 @@ def issue_return_qr(conn: sqlite3.Connection, *, user_id: int, rental_id: int | 
         INSERT INTO qr_tokens (token_hash, action, user_id, slot_id, rental_id, return_type, expires_at, created_at)
         VALUES (?, 'return', ?, ?, ?, ?, ?, ?)
         """,
-        (hash_token(token), user_id, rental["slot_id"], rental["id"], return_type, expires_at, utc_now_iso()),
+        (hash_token(token), user_id, rental["slot_id"], rental["id"], return_type, expires_at, now),
     )
     slot_meta = slot_with_location(conn, rental["slot_id"])
     return {
@@ -319,15 +347,28 @@ def issue_return_qr(conn: sqlite3.Connection, *, user_id: int, rental_id: int | 
 
 
 def scan_qr(conn: sqlite3.Connection, *, token: str) -> dict:
-    settings = get_settings()
+    begin_immediate(conn)
     token_hash = hash_token(token)
     token_row = one(conn, "SELECT * FROM qr_tokens WHERE token_hash = ?", (token_hash,))
     if token_row is None:
         raise HTTPException(status_code=404, detail="QR token not found")
     if token_row["used_at"] is not None:
         raise HTTPException(status_code=409, detail="QR token already used")
+    if token_row["revoked_at"] is not None:
+        raise HTTPException(status_code=409, detail="QR token superseded")
     if parse_iso(token_row["expires_at"]) < utc_now():
         raise HTTPException(status_code=410, detail="QR token expired")
+
+    claimed = conn.execute(
+        """
+        UPDATE qr_tokens
+        SET used_at = ?
+        WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL
+        """,
+        (utc_now_iso(), token_row["id"]),
+    )
+    if claimed.rowcount != 1:
+        raise HTTPException(status_code=409, detail="QR token already used")
 
     if token_row["action"] == "rent":
         result = _scan_rent_qr(conn, token_row)
@@ -336,7 +377,6 @@ def scan_qr(conn: sqlite3.Connection, *, token: str) -> dict:
     else:
         raise HTTPException(status_code=400, detail="Unsupported QR action")
 
-    conn.execute("UPDATE qr_tokens SET used_at = ? WHERE id = ?", (utc_now_iso(), token_row["id"]))
     return result
 
 
@@ -353,17 +393,20 @@ def _scan_rent_qr(conn: sqlite3.Connection, token_row: sqlite3.Row) -> dict:
         raise HTTPException(status_code=409, detail="User already has an active rental")
 
     now = utc_now_iso()
-    cursor = conn.execute(
-        """
-        INSERT INTO rentals (
-            user_id, slot_id, status, deposit_amount, deposit_charged_at,
-            deposit_refunded_at, started_at, due_at, returned_at, return_type,
-            created_at, updated_at
+    try:
+        cursor = conn.execute(
+            """
+            INSERT INTO rentals (
+                user_id, slot_id, status, deposit_amount, deposit_charged_at,
+                deposit_refunded_at, started_at, due_at, returned_at, return_type,
+                created_at, updated_at
+            )
+            VALUES (?, ?, 'pending_pickup', ?, ?, NULL, NULL, NULL, NULL, 'normal', ?, ?)
+            """,
+            (user["id"], slot["id"], settings.deposit_amount, now, now, now),
         )
-        VALUES (?, ?, 'pending_pickup', ?, ?, NULL, NULL, NULL, NULL, 'normal', ?, ?)
-        """,
-        (user["id"], slot["id"], settings.deposit_amount, now, now, now),
-    )
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Rental state changed") from exc
     rental_id = cursor.lastrowid
     add_wallet_transaction(
         conn,
@@ -373,10 +416,16 @@ def _scan_rent_qr(conn: sqlite3.Connection, token_row: sqlite3.Row) -> dict:
         rental_id=rental_id,
         note="Rental deposit charged on QR scan",
     )
-    conn.execute(
-        "UPDATE slots SET status = 'occupied', current_rental_id = ?, updated_at = ? WHERE id = ?",
+    slot_updated = conn.execute(
+        """
+        UPDATE slots
+        SET status = 'occupied', current_rental_id = ?, updated_at = ?
+        WHERE id = ? AND status = 'available' AND umbrella_present = 1 AND current_rental_id IS NULL
+        """,
         (rental_id, now, slot["id"]),
     )
+    if slot_updated.rowcount != 1:
+        raise HTTPException(status_code=409, detail="Slot state changed")
 
     slot_meta = slot_with_location(conn, slot["id"])
     return {
@@ -405,10 +454,16 @@ def _scan_return_qr(conn: sqlite3.Connection, token_row: sqlite3.Row) -> dict:
 
     now = utc_now_iso()
     return_type = token_row["return_type"] or "normal"
-    conn.execute(
-        "UPDATE rentals SET status = 'pending_return', return_type = ?, updated_at = ? WHERE id = ?",
+    rental_updated = conn.execute(
+        """
+        UPDATE rentals
+        SET status = 'pending_return', return_type = ?, updated_at = ?
+        WHERE id = ? AND status = 'active'
+        """,
         (return_type, now, rental["id"]),
     )
+    if rental_updated.rowcount != 1:
+        raise HTTPException(status_code=409, detail="Rental state changed")
     conn.execute(
         "UPDATE slots SET status = 'occupied', current_rental_id = ?, updated_at = ? WHERE id = ?",
         (rental["id"], now, slot["id"]),
@@ -430,6 +485,7 @@ def _scan_return_qr(conn: sqlite3.Connection, token_row: sqlite3.Row) -> dict:
 
 
 def handle_sensor_event(conn: sqlite3.Connection, *, slot_id: int, present: bool) -> dict:
+    begin_immediate(conn)
     slot = require_slot(conn, slot_id)
     now = utc_now_iso()
     rental = None
@@ -440,35 +496,41 @@ def handle_sensor_event(conn: sqlite3.Connection, *, slot_id: int, present: bool
 
     if not present and rental is not None and rental["status"] == "pending_pickup":
         due_at = add_hours(get_settings().rental_hours)
-        conn.execute(
+        rental_updated = conn.execute(
             """
             UPDATE rentals
             SET status = 'active', started_at = ?, due_at = ?, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND status = 'pending_pickup'
             """,
             (now, due_at, now, rental["id"]),
         )
-        conn.execute(
+        if rental_updated.rowcount != 1:
+            raise HTTPException(status_code=409, detail="Rental state changed")
+        slot_updated = conn.execute(
             """
             UPDATE slots
             SET status = 'occupied', umbrella_present = 0, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND current_rental_id = ?
             """,
-            (now, slot_id),
+            (now, slot_id, rental["id"]),
         )
+        if slot_updated.rowcount != 1:
+            raise HTTPException(status_code=409, detail="Slot state changed")
         rental = require_rental(conn, rental["id"])
         event = "pickup_completed"
     elif present and rental is not None and rental["status"] == "pending_return":
         if (rental["return_type"] or "normal") == "damage_report":
-            conn.execute(
+            rental_updated = conn.execute(
                 """
                 UPDATE rentals
                 SET status = 'self_damage_reported', returned_at = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'pending_return'
                 """,
                 (now, now, rental["id"]),
             )
-            conn.execute(
+            if rental_updated.rowcount != 1:
+                raise HTTPException(status_code=409, detail="Rental state changed")
+            slot_updated = conn.execute(
                 """
                 UPDATE slots
                 SET status = 'disabled',
@@ -476,10 +538,12 @@ def handle_sensor_event(conn: sqlite3.Connection, *, slot_id: int, present: bool
                     current_rental_id = NULL,
                     report_reason = 'umbrella_damage',
                     updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND current_rental_id = ?
                 """,
-                (now, slot_id),
+                (now, slot_id, rental["id"]),
             )
+            if slot_updated.rowcount != 1:
+                raise HTTPException(status_code=409, detail="Slot state changed")
             _insert_report(
                 conn,
                 rental_id=rental["id"],
@@ -493,16 +557,18 @@ def handle_sensor_event(conn: sqlite3.Connection, *, slot_id: int, present: bool
             rental = require_rental(conn, rental["id"])
             event = "damage_return_completed"
         else:
-            _refund_deposit_if_needed(conn, rental)
-            conn.execute(
+            rental_updated = conn.execute(
                 """
                 UPDATE rentals
                 SET status = 'completed', returned_at = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND status = 'pending_return'
                 """,
                 (now, now, rental["id"]),
             )
-            conn.execute(
+            if rental_updated.rowcount != 1:
+                raise HTTPException(status_code=409, detail="Rental state changed")
+            _refund_deposit_if_needed(conn, rental)
+            slot_updated = conn.execute(
                 """
                 UPDATE slots
                 SET status = 'available',
@@ -510,10 +576,12 @@ def handle_sensor_event(conn: sqlite3.Connection, *, slot_id: int, present: bool
                     current_rental_id = NULL,
                     report_reason = NULL,
                     updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND current_rental_id = ?
                 """,
-                (now, slot_id),
+                (now, slot_id, rental["id"]),
             )
+            if slot_updated.rowcount != 1:
+                raise HTTPException(status_code=409, detail="Slot state changed")
             rental = require_rental(conn, rental["id"])
             event = "return_completed"
     else:

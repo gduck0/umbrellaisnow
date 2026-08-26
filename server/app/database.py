@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS qr_tokens (
     return_type TEXT,
     expires_at TEXT NOT NULL,
     used_at TEXT,
+    revoked_at TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -166,11 +167,26 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     add_column_if_missing(conn, "rentals", "due_at", "TEXT")
     add_column_if_missing(conn, "rentals", "return_type", "TEXT NOT NULL DEFAULT 'normal'")
     add_column_if_missing(conn, "qr_tokens", "return_type", "TEXT")
+    add_column_if_missing(conn, "qr_tokens", "revoked_at", "TEXT")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL")
     conn.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_slots_location_number ON slots(location_id, slot_number)
         WHERE location_id IS NOT NULL AND slot_number IS NOT NULL
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_rentals_one_open_per_user
+        ON rentals(user_id)
+        WHERE status IN ('pending_pickup', 'active', 'pending_return')
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_rentals_one_open_per_slot
+        ON rentals(slot_id)
+        WHERE status IN ('pending_pickup', 'active', 'pending_return')
         """
     )
 
@@ -179,6 +195,11 @@ def add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, def
     columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def begin_immediate(conn: sqlite3.Connection) -> None:
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
 
 
 def seed_locations_and_slots(conn: sqlite3.Connection, slots_per_location: int) -> None:

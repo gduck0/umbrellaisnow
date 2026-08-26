@@ -255,6 +255,7 @@ Authorization: Bearer <access_token>
 ```
 
 응답의 `token`을 앱에서 QR로 렌더링하면 됩니다. 토큰은 60초 동안 1회만 유효합니다.
+같은 사용자나 슬롯에 새 대여 QR을 발급하면 이전 미사용 QR은 폐기되며, 이전 QR 스캔은 `409 QR token superseded`를 반환합니다.
 
 ### 하드웨어: QR 스캔
 
@@ -274,6 +275,7 @@ X-Hardware-Key: <device-secret>
 ```
 
 대여 QR이면 이 시점에 보증금 3,000원이 차감되고 잠금 해제 응답이 내려갑니다.
+같은 QR을 동시에 스캔해도 한 요청만 상태 전이와 보증금 차감을 수행하며 나머지는 `409`를 반환합니다.
 
 ### 하드웨어: IR 인출 감지
 
@@ -289,6 +291,7 @@ X-Hardware-Key: <device-secret>
 ```
 
 `pending_pickup` 대여가 있으면 `active`로 전환됩니다.
+같은 센서 값을 반복해서 보내면 최초 요청만 상태를 전이하고 이후 요청은 `sensor_updated`로 응답하며 금전 처리를 반복하지 않습니다.
 
 ## 반납
 
@@ -342,6 +345,8 @@ Authorization: Bearer <access_token>
 
 - `normal`: `completed` 전환, 보증금 3,000원 환불
 - `damage_report`: `self_damage_reported` 전환, 보증금 환불 없음, 슬롯 `disabled`
+
+QR 스캔과 센서 상태 전이는 SQLite 쓰기 트랜잭션에서 직렬화됩니다. 진행 중 대여는 DB 제약으로 사용자별·슬롯별 하나만 허용됩니다.
 
 ## 신고
 
