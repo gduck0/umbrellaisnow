@@ -17,6 +17,7 @@ RentalStatus = Literal[
 QrAction = Literal["rent", "return"]
 ReturnType = Literal["normal", "damage_report"]
 SlotReportReason = Literal["umbrella_damage", "umbrella_missing", "other"]
+AuditActorType = Literal["user", "admin", "hardware", "system"]
 
 
 class RegisterRequest(BaseModel):
@@ -211,3 +212,14 @@ class ApiInfo(BaseModel):
     docs: str
     health: str
     local_only: bool
+
+
+class AuditEventOut(BaseModel):
+    id: int
+    action: str
+    actor_type: AuditActorType
+    actor_id: str | None = None
+    resource_type: str
+    resource_id: int | None = None
+    details: dict
+    created_at: str

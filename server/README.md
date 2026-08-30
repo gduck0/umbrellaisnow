@@ -87,6 +87,19 @@ Authorization: Bearer <access_token>
 
 DB는 서버를 처음 실행할 때 자동으로 만들어진다. 실행 중 생성된 DB와 실제 사용자 데이터는 Git에 올리지 않는다.
 
+### 버전 마이그레이션과 감사 이력
+
+서버를 시작하면 적용한 DB 변경의 버전, 이름, 시각을 `schema_migrations`에 기록한다. 현재
+서버보다 최신인 DB는 실행을 거부하며, 각 마이그레이션은 SQLite savepoint 안에서 처리해
+일부만 적용된 상태가 남지 않게 한다.
+
+QR 승인, 대여·반납 센서 처리, 신고, 유지보수, 사용자 삭제는 `audit_events`에 추가된다.
+DB 트리거가 이 테이블의 수정과 삭제를 막는다. 토큰, 비밀번호, 하드웨어 키, 신고 설명은
+감사 이력에 저장하지 않는다.
+
+관리자는 `GET /api/admin/audit-events`에서 최신 이력을 조회할 수 있다. `action`,
+`resource_type`, `before_id`, `limit` 필터를 지원한다.
+
 ## API
 
 전체 요청/응답 구조와 앱 흐름은 [API.md](API.md)에 정리되어 있다.

@@ -5,6 +5,7 @@ os.environ["UMBRELLA_DATABASE_PATH"] = str(Path(__file__).parent / "test.db")
 
 from fastapi.testclient import TestClient
 
+from app.database import get_db
 from app.main import app
 
 
@@ -53,6 +54,18 @@ def test_full_rent_and_return_flow(tmp_path):
 
         wallet = client.get(f"/api/users/{user['id']}/wallet", headers=headers).json()
         assert wallet["balance"] == 5000
+
+        with get_db() as conn:
+            actions = [
+                row["action"]
+                for row in conn.execute("SELECT action FROM audit_events ORDER BY id")
+            ]
+        assert actions == [
+            "rental.rent_authorized",
+            "rental.pickup_completed",
+            "rental.return_authorized",
+            "rental.return_completed",
+        ]
 
 
 def test_defect_report_penalizes_previous_user(tmp_path):

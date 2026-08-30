@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -131,6 +132,9 @@ DEFAULT_LOCATIONS = (
 )
 
 
+Migration = tuple[int, str, Callable[[sqlite3.Connection], None]]
+
+
 def get_db() -> sqlite3.Connection:
     settings = get_settings()
     db_path = settings.database_path
@@ -153,6 +157,49 @@ def init_db() -> None:
 
 
 def migrate_db(conn: sqlite3.Connection) -> None:
+    conn.execute("SAVEPOINT migrate_db")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        applied = {
+            int(row["version"]): row["name"]
+            for row in conn.execute("SELECT version, name FROM schema_migrations")
+        }
+        known_versions = {version for version, _, _ in MIGRATIONS}
+        future_versions = sorted(set(applied) - known_versions)
+        if future_versions:
+            raise RuntimeError(
+                f"Database schema is newer than this server: {future_versions[-1]}"
+            )
+
+        for version, name, migration in MIGRATIONS:
+            applied_name = applied.get(version)
+            if applied_name is not None:
+                if applied_name != name:
+                    raise RuntimeError(
+                        f"Migration {version} is recorded as {applied_name!r}, expected {name!r}"
+                    )
+                continue
+            migration(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                (version, name, utc_now_iso()),
+            )
+        conn.execute("RELEASE SAVEPOINT migrate_db")
+    except Exception:
+        conn.execute("ROLLBACK TO SAVEPOINT migrate_db")
+        conn.execute("RELEASE SAVEPOINT migrate_db")
+        raise
+
+
+def migrate_legacy_schema(conn: sqlite3.Connection) -> None:
     add_column_if_missing(conn, "users", "email", "TEXT")
     add_column_if_missing(conn, "users", "password_hash", "TEXT")
     add_column_if_missing(
@@ -189,6 +236,53 @@ def migrate_db(conn: sqlite3.Connection) -> None:
         WHERE status IN ('pending_pickup', 'active', 'pending_return')
         """
     )
+
+
+def migrate_audit_events(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action TEXT NOT NULL,
+            actor_type TEXT NOT NULL CHECK (actor_type IN ('user', 'admin', 'hardware', 'system')),
+            actor_id TEXT,
+            resource_type TEXT NOT NULL,
+            resource_id INTEGER,
+            details_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX idx_audit_events_action_created ON audit_events(action, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX idx_audit_events_resource ON audit_events(resource_type, resource_id, id DESC)"
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER audit_events_no_update
+        BEFORE UPDATE ON audit_events
+        BEGIN
+            SELECT RAISE(ABORT, 'audit events are immutable');
+        END
+        """
+    )
+    conn.execute(
+        """
+        CREATE TRIGGER audit_events_no_delete
+        BEFORE DELETE ON audit_events
+        BEGIN
+            SELECT RAISE(ABORT, 'audit events are immutable');
+        END
+        """
+    )
+
+
+MIGRATIONS: tuple[Migration, ...] = (
+    (1, "legacy-schema-compatibility", migrate_legacy_schema),
+    (2, "immutable-audit-events", migrate_audit_events),
+)
 
 
 def add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:

@@ -2,6 +2,21 @@
 
 Base URL: `http://127.0.0.1:8000`
 
+## 관리자 감사 이력
+
+`GET /api/admin/audit-events`
+
+`admin` 역할의 Bearer 토큰이 필요하다. 이력은 최신순으로 반환되며 수정하거나 삭제할 수
+없다. `action`, `resource_type`, `before_id`, `limit`(1~100)을 선택해서 조회할 수 있다.
+
+```http
+GET /api/admin/audit-events?action=rental.return_completed&limit=20
+Authorization: Bearer <admin-access-token>
+```
+
+각 항목에는 작업, 요청 주체, 대상, 민감하지 않은 상태 정보, 시각이 포함된다. QR·세션 토큰,
+비밀번호, 하드웨어 키, 신고 설명은 기록하지 않는다.
+
 개발 기본값에서는 Android 앱과 로컬 시뮬레이터 연결을 허용합니다. 외부 공개 배포 전에는 아래 인증 경계를 적용하고, 필요하면 `UMBRELLA_LOCAL_ONLY=true`로 허용된 로컬 호스트 요청만 받습니다.
 
 ## 화면 기준 앱 흐름

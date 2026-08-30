@@ -89,8 +89,15 @@ def test_hardware_key_can_replace_user_simulation(monkeypatch):
 
         scanned = client.post(
             "/api/hardware/qr/scan",
-            json={"token": qr["token"]},
+            json={"token": qr["token"], "device_id": "pi-test-1"},
             headers={"X-Hardware-Key": "test-hardware-key"},
         )
         assert scanned.status_code == 200
         assert scanned.json()["unlock"] is True
+
+        with sqlite3.connect(get_settings().database_path) as conn:
+            audit = conn.execute(
+                "SELECT actor_type, actor_id, details_json FROM audit_events ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        assert audit[0:2] == ("hardware", "pi-test-1")
+        assert "test-hardware-key" not in audit[2]

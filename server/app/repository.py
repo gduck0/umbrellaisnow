@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -275,3 +276,72 @@ def list_rentals(conn: sqlite3.Connection, user_id: int | None = None) -> list[d
     return rows_to_dicts(
         many(conn, "SELECT * FROM rentals WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
     )
+
+
+def record_audit_event(
+    conn: sqlite3.Connection,
+    *,
+    action: str,
+    actor_type: str,
+    actor_id: str | int | None,
+    resource_type: str,
+    resource_id: int | None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    cursor = conn.execute(
+        """
+        INSERT INTO audit_events (
+            action, actor_type, actor_id, resource_type, resource_id, details_json, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            action,
+            actor_type,
+            str(actor_id) if actor_id is not None else None,
+            resource_type,
+            resource_id,
+            json.dumps(details or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            utc_now_iso(),
+        ),
+    )
+    row = one(conn, "SELECT * FROM audit_events WHERE id = ?", (cursor.lastrowid,))
+    return audit_event_to_dict(row)
+
+
+def audit_event_to_dict(row: sqlite3.Row | None) -> dict[str, Any]:
+    if row is None:
+        raise RuntimeError("Audit event was not persisted")
+    event = dict(row)
+    event["details"] = json.loads(event.pop("details_json"))
+    return event
+
+
+def list_audit_events(
+    conn: sqlite3.Connection,
+    *,
+    action: str | None = None,
+    resource_type: str | None = None,
+    before_id: int | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if action is not None:
+        clauses.append("action = ?")
+        params.append(action)
+    if resource_type is not None:
+        clauses.append("resource_type = ?")
+        params.append(resource_type)
+    if before_id is not None:
+        clauses.append("id < ?")
+        params.append(before_id)
+
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
+    rows = many(
+        conn,
+        f"SELECT * FROM audit_events {where} ORDER BY id DESC LIMIT ?",
+        params,
+    )
+    return [audit_event_to_dict(row) for row in rows]

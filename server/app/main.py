@@ -10,7 +10,9 @@ from .config import get_settings
 from .database import get_db, init_db, many, one
 from .repository import (
     all_slots_with_location,
+    list_audit_events,
     list_rentals,
+    record_audit_event,
     rental_detail,
     require_rental,
     require_user,
@@ -21,6 +23,7 @@ from .repository import (
 from .schemas import (
     ApiInfo,
     AppHomeOut,
+    AuditEventOut,
     AuthOut,
     HardwareScanOut,
     HardwareScanRequest,
@@ -137,6 +140,12 @@ def require_hardware_access(
     if current_settings.allow_user_hardware_simulation:
         return authenticate_bearer(authorization, conn)
     raise HTTPException(status_code=401, detail="Invalid hardware credentials")
+
+
+def hardware_audit_actor(access, device_id: str | None) -> tuple[str, str | int | None]:
+    if access is None:
+        return "hardware", device_id
+    return "user", access["id"]
 
 
 @app.get("/", include_in_schema=False)
@@ -285,7 +294,13 @@ def create_return_qr(payload: ReturnQrRequest, user=Depends(current_user), conn=
 
 @app.post("/api/hardware/qr/scan", response_model=HardwareScanOut)
 def hardware_scan_qr(payload: HardwareScanRequest, _access=Depends(require_hardware_access), conn=Depends(db)):
-    return scan_qr(conn, token=payload.token)
+    actor_type, actor_id = hardware_audit_actor(_access, payload.device_id)
+    return scan_qr(
+        conn,
+        token=payload.token,
+        actor_type=actor_type,
+        actor_id=actor_id,
+    )
 
 
 @app.post("/api/hardware/slots/{slot_id}/sensor", response_model=SensorEventOut)
@@ -295,7 +310,14 @@ def hardware_sensor_event(
     _access=Depends(require_hardware_access),
     conn=Depends(db),
 ):
-    return handle_sensor_event(conn, slot_id=slot_id, present=payload.present)
+    actor_type, actor_id = hardware_audit_actor(_access, payload.device_id)
+    return handle_sensor_event(
+        conn,
+        slot_id=slot_id,
+        present=payload.present,
+        actor_type=actor_type,
+        actor_id=actor_id,
+    )
 
 
 @app.get("/api/rentals")
@@ -387,16 +409,39 @@ def enable_slot_endpoint(
     _admin=Depends(require_admin),
     conn=Depends(db),
 ):
-    return enable_slot(conn, slot_id=slot_id, umbrella_present=payload.umbrella_present)
+    return enable_slot(
+        conn,
+        slot_id=slot_id,
+        umbrella_present=payload.umbrella_present,
+        actor_user_id=_admin["id"],
+    )
 
 
 @app.post("/api/maintenance/slots/{slot_id}/disable", response_model=SlotOut)
 def disable_slot_endpoint(slot_id: int, _admin=Depends(require_admin), conn=Depends(db)):
-    return disable_slot(conn, slot_id=slot_id)
+    return disable_slot(conn, slot_id=slot_id, actor_user_id=_admin["id"])
 
 
 # ── 관리자 API ───────────────────────────────────────────────
 # DB에 admin 역할이 지정된 로그인 사용자만 접근
+
+@app.get("/api/admin/audit-events", response_model=list[AuditEventOut])
+def admin_get_audit_events(
+    action: str | None = Query(default=None, min_length=1, max_length=80),
+    resource_type: str | None = Query(default=None, min_length=1, max_length=40),
+    before_id: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
+    _admin=Depends(require_admin),
+    conn=Depends(db),
+):
+    return list_audit_events(
+        conn,
+        action=action,
+        resource_type=resource_type,
+        before_id=before_id,
+        limit=limit,
+    )
+
 
 @app.get("/api/admin/users")
 def admin_get_all_users(_admin=Depends(require_admin), conn=Depends(db)):
@@ -433,6 +478,14 @@ def admin_delete_user(user_id: int, _admin=Depends(require_admin), conn=Depends(
     conn.execute("DELETE FROM user_sessions WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM slot_reports WHERE reporter_user_id = ?", (user_id,))
     conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    record_audit_event(
+        conn,
+        action="user.deleted",
+        actor_type="admin",
+        actor_id=_admin["id"],
+        resource_type="user",
+        resource_id=user_id,
+    )
     return None
 
 

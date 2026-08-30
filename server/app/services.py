@@ -14,6 +14,7 @@ from .repository import (
     location_summaries,
     locked_deposit_for_user,
     previous_completed_rental_for_slot,
+    record_audit_event,
     rental_detail,
     require_location,
     require_rental,
@@ -239,6 +240,15 @@ def report_slot_issue(
         """,
         (reason, now, slot_id),
     )
+    record_audit_event(
+        conn,
+        action="slot.issue_reported",
+        actor_type="user",
+        actor_id=user_id,
+        resource_type="slot",
+        resource_id=slot_id,
+        details={"reason": reason, "report_id": cursor.lastrowid},
+    )
     return {
         "report": row_to_dict(one(conn, "SELECT * FROM slot_reports WHERE id = ?", (cursor.lastrowid,))),
         "slot": slot_with_location(conn, slot_id),
@@ -346,7 +356,13 @@ def issue_return_qr(conn: sqlite3.Connection, *, user_id: int, rental_id: int | 
     }
 
 
-def scan_qr(conn: sqlite3.Connection, *, token: str) -> dict:
+def scan_qr(
+    conn: sqlite3.Connection,
+    *,
+    token: str,
+    actor_type: str = "hardware",
+    actor_id: str | int | None = None,
+) -> dict:
     begin_immediate(conn)
     token_hash = hash_token(token)
     token_row = one(conn, "SELECT * FROM qr_tokens WHERE token_hash = ?", (token_hash,))
@@ -377,6 +393,18 @@ def scan_qr(conn: sqlite3.Connection, *, token: str) -> dict:
     else:
         raise HTTPException(status_code=400, detail="Unsupported QR action")
 
+    record_audit_event(
+        conn,
+        action=f"rental.{result['action']}_authorized",
+        actor_type=actor_type,
+        actor_id=actor_id,
+        resource_type="rental",
+        resource_id=result["rental_id"],
+        details={
+            "slot_id": result["slot_id"],
+            "return_type": result["return_type"],
+        },
+    )
     return result
 
 
@@ -484,7 +512,14 @@ def _scan_return_qr(conn: sqlite3.Connection, token_row: sqlite3.Row) -> dict:
     }
 
 
-def handle_sensor_event(conn: sqlite3.Connection, *, slot_id: int, present: bool) -> dict:
+def handle_sensor_event(
+    conn: sqlite3.Connection,
+    *,
+    slot_id: int,
+    present: bool,
+    actor_type: str = "hardware",
+    actor_id: str | int | None = None,
+) -> dict:
     begin_immediate(conn)
     slot = require_slot(conn, slot_id)
     now = utc_now_iso()
@@ -591,6 +626,16 @@ def handle_sensor_event(conn: sqlite3.Connection, *, slot_id: int, present: bool
             (int(present), now, slot_id),
         )
 
+    if event != "sensor_updated" and rental is not None:
+        record_audit_event(
+            conn,
+            action=f"rental.{event}",
+            actor_type=actor_type,
+            actor_id=actor_id,
+            resource_type="rental",
+            resource_id=rental["id"],
+            details={"slot_id": slot_id, "present": present},
+        )
     return {
         "slot": slot_with_location(conn, slot_id),
         "rental": rental_detail(conn, rental["id"]) if rental is not None else None,
@@ -649,6 +694,19 @@ def report_defect(conn: sqlite3.Connection, *, user_id: int, rental_id: int | No
         previous_user_id=previous["user_id"] if previous is not None else None,
         description=description,
     )
+    record_audit_event(
+        conn,
+        action="rental.defect_reported",
+        actor_type="user",
+        actor_id=user_id,
+        resource_type="rental",
+        resource_id=rental["id"],
+        details={
+            "slot_id": rental["slot_id"],
+            "report_id": report_id,
+            "previous_rental_id": previous["id"] if previous is not None else None,
+        },
+    )
 
     return {
         "report": row_to_dict(one(conn, "SELECT * FROM reports WHERE id = ?", (report_id,))),
@@ -703,6 +761,15 @@ def report_self_damage(
         previous_user_id=None,
         description=description,
     )
+    record_audit_event(
+        conn,
+        action="rental.self_damage_reported",
+        actor_type="user",
+        actor_id=user_id,
+        resource_type="rental",
+        resource_id=rental["id"],
+        details={"slot_id": rental["slot_id"], "report_id": report_id},
+    )
 
     return {
         "report": row_to_dict(one(conn, "SELECT * FROM reports WHERE id = ?", (report_id,))),
@@ -712,7 +779,13 @@ def report_self_damage(
     }
 
 
-def enable_slot(conn: sqlite3.Connection, *, slot_id: int, umbrella_present: bool) -> dict:
+def enable_slot(
+    conn: sqlite3.Connection,
+    *,
+    slot_id: int,
+    umbrella_present: bool,
+    actor_user_id: int | None = None,
+) -> dict:
     require_slot(conn, slot_id)
     now = utc_now_iso()
     conn.execute(
@@ -723,15 +796,38 @@ def enable_slot(conn: sqlite3.Connection, *, slot_id: int, umbrella_present: boo
         """,
         ("available" if umbrella_present else "occupied", int(umbrella_present), now, slot_id),
     )
+    record_audit_event(
+        conn,
+        action="slot.enabled",
+        actor_type="admin" if actor_user_id is not None else "system",
+        actor_id=actor_user_id,
+        resource_type="slot",
+        resource_id=slot_id,
+        details={"umbrella_present": umbrella_present},
+    )
     return slot_with_location(conn, slot_id)
 
 
-def disable_slot(conn: sqlite3.Connection, *, slot_id: int) -> dict:
+def disable_slot(
+    conn: sqlite3.Connection,
+    *,
+    slot_id: int,
+    actor_user_id: int | None = None,
+) -> dict:
     require_slot(conn, slot_id)
     now = utc_now_iso()
     conn.execute(
         "UPDATE slots SET status = 'disabled', current_rental_id = NULL, report_reason = 'maintenance', updated_at = ? WHERE id = ?",
         (now, slot_id),
+    )
+    record_audit_event(
+        conn,
+        action="slot.disabled",
+        actor_type="admin" if actor_user_id is not None else "system",
+        actor_id=actor_user_id,
+        resource_type="slot",
+        resource_id=slot_id,
+        details={"reason": "maintenance"},
     )
     return slot_with_location(conn, slot_id)
 

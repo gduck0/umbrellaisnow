@@ -38,6 +38,17 @@ def test_admin_can_list_search_and_delete_users():
             headers=admin_headers,
         ).status_code == 200
 
+        assert client.get("/api/admin/audit-events").status_code == 401
+        assert client.get("/api/admin/audit-events", headers=user_headers).status_code == 403
+        audit_events = client.get(
+            "/api/admin/audit-events",
+            params={"resource_type": "slot"},
+            headers=admin_headers,
+        ).json()
+        assert [event["action"] for event in audit_events] == ["slot.enabled", "slot.disabled"]
+        assert {event["actor_id"] for event in audit_events} == {str(admin["id"])}
+        assert audit_events[0]["details"] == {"umbrella_present": True}
+
         users = client.get("/api/admin/users", headers=admin_headers)
         assert users.status_code == 200
         assert {user["id"] for user in users.json()} == {admin["id"], created["id"]}
@@ -54,3 +65,10 @@ def test_admin_can_list_search_and_delete_users():
         deleted = client.delete(f"/api/admin/users/{created['id']}", headers=admin_headers)
         assert deleted.status_code == 204
         assert client.get(f"/api/users/{created['id']}", headers=admin_headers).status_code == 404
+
+        deleted_events = client.get(
+            "/api/admin/audit-events",
+            params={"action": "user.deleted", "limit": 1},
+            headers=admin_headers,
+        ).json()
+        assert deleted_events[0]["resource_id"] == created["id"]
