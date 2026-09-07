@@ -50,7 +50,20 @@ python -m uvicorn app.main:app --reload
 
 - Swagger: http://127.0.0.1:8000/docs
 - Health: http://127.0.0.1:8000/health
+- Readiness: http://127.0.0.1:8000/health/ready
 - 건물 목록: http://127.0.0.1:8000/api/locations
+
+## 운영 확인
+
+모든 응답에는 `X-Request-ID`가 포함된다. 앱이나 장비가 올바른 요청 ID를 보내면 그대로
+사용하고, 없거나 형식이 잘못되면 서버가 새 값을 만든다. 접근 로그는 요청 본문이나 인증
+값을 제외하고 요청 ID, 메서드, 경로, 상태 코드, 처리 시간만 JSON으로 기록한다.
+
+- `GET /health`: 프로세스가 요청을 받을 수 있는지 확인
+- `GET /health/ready`: DB 연결과 현재 스키마 버전을 확인
+
+예상하지 못한 서버 오류는 내부 예외 내용을 노출하지 않고 오류 코드와 요청 ID가 있는
+일정한 JSON 응답을 반환한다. 서버 로그의 같은 요청 ID로 원인을 추적할 수 있다.
 
 ## 테스트
 

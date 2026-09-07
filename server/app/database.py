@@ -285,6 +285,11 @@ MIGRATIONS: tuple[Migration, ...] = (
 )
 
 
+def current_schema_version(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()
+    return int(row[0])
+
+
 def add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
     columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in columns:

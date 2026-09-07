@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from .config import get_settings
-from .database import get_db, init_db, many, one
+from .database import current_schema_version, get_db, init_db, many, one
+from .observability import RequestContextMiddleware, unexpected_error_handler
 from .repository import (
     all_slots_with_location,
     list_audit_events,
@@ -33,6 +34,7 @@ from .schemas import (
     PaymentDisabledOut,
     PaymentMethodOut,
     QrTokenOut,
+    ReadinessOut,
     RechargeRequest,
     RegisterRequest,
     RentQrRequest,
@@ -94,6 +96,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(RequestContextMiddleware)
+app.add_exception_handler(Exception, unexpected_error_handler)
 
 
 def db():
@@ -166,6 +170,16 @@ def api_info():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/health/ready", response_model=ReadinessOut)
+def readiness(conn=Depends(db)):
+    conn.execute("SELECT 1").fetchone()
+    return {
+        "status": "ready",
+        "database": "ok",
+        "schema_version": current_schema_version(conn),
+    }
 
 
 @app.post("/api/auth/register", response_model=AuthOut, status_code=201)

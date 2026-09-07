@@ -214,6 +214,12 @@ class ApiInfo(BaseModel):
     local_only: bool
 
 
+class ReadinessOut(BaseModel):
+    status: Literal["ready"]
+    database: Literal["ok"]
+    schema_version: int
+
+
 class AuditEventOut(BaseModel):
     id: int
     action: str

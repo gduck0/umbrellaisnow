@@ -2,6 +2,33 @@
 
 Base URL: `http://127.0.0.1:8000`
 
+## 상태 확인과 요청 추적
+
+`GET /health`는 기존과 같이 `{"status": "ok"}`를 반환한다. `GET /health/ready`는 DB 연결과
+적용된 스키마 버전까지 확인한다.
+
+```json
+{
+  "status": "ready",
+  "database": "ok",
+  "schema_version": 2
+}
+```
+
+모든 응답에는 `X-Request-ID` 헤더가 포함된다. 클라이언트가 영문자, 숫자, `.`, `_`, `:`,
+`-`로 구성된 128자 이하 값을 보내면 서버 로그와 응답에서 같은 값을 사용한다. 예상하지
+못한 오류는 아래 형식으로 반환되며 내부 예외 메시지는 노출하지 않는다.
+
+```json
+{
+  "detail": {
+    "code": "INTERNAL_SERVER_ERROR",
+    "message": "Unexpected server error",
+    "request_id": "2f4fdd0abf214dc29f8365e05c9b1c20"
+  }
+}
+```
+
 ## 관리자 감사 이력
 
 `GET /api/admin/audit-events`
