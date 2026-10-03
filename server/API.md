@@ -316,7 +316,7 @@ X-Hardware-Key: <device-secret>
 }
 ```
 
-대여 QR이면 이 시점에 보증금 3,000원이 차감되고 잠금 해제 응답이 내려갑니다.
+대여 QR이면 이 시점에 보증금 3,000P이 차감되고 잠금 해제 응답이 내려갑니다.
 같은 QR을 동시에 스캔해도 한 요청만 상태 전이와 보증금 차감을 수행하며 나머지는 `409`를 반환합니다.
 
 ### 하드웨어: IR 인출 감지
@@ -333,7 +333,7 @@ X-Hardware-Key: <device-secret>
 ```
 
 `pending_pickup` 대여가 있으면 `active`로 전환됩니다.
-같은 센서 값을 반복해서 보내면 최초 요청만 상태를 전이하고 이후 요청은 `sensor_updated`로 응답하며 금전 처리를 반복하지 않습니다.
+같은 센서 값을 반복해서 보내면 최초 요청만 상태를 전이하고 이후 요청은 `sensor_updated`로 응답하며 포인트 처리를 반복하지 않습니다.
 
 ## 반납
 
@@ -358,8 +358,8 @@ Authorization: Bearer <access_token>
 
 `return_type` 값:
 
-- `normal`: 정상 반납, IR 삽입 감지 후 보증금 환불
-- `damage_report`: 고장 신고 반납, IR 삽입 감지 후 보증금 환불 없음 + 슬롯 점검 처리
+- `normal`: 정상 반납, IR 삽입 감지 후 보증금 포인트 반환
+- `damage_report`: 고장 신고 반납, IR 삽입 감지 후 보증금 포인트 반환 없음 + 슬롯 점검 처리
 
 ### 하드웨어: 반납 QR 스캔
 
@@ -385,8 +385,8 @@ Authorization: Bearer <access_token>
 
 `pending_return` 대여가 있으면 반납 방식에 따라 처리됩니다.
 
-- `normal`: `completed` 전환, 보증금 3,000원 환불
-- `damage_report`: `self_damage_reported` 전환, 보증금 환불 없음, 슬롯 `disabled`
+- `normal`: `completed` 전환, 보증금 3,000P 반환
+- `damage_report`: `self_damage_reported` 전환, 보증금 포인트 반환 없음, 슬롯 `disabled`
 
 QR 스캔과 센서 상태 전이는 SQLite 쓰기 트랜잭션에서 직렬화됩니다. 진행 중 대여는 DB 제약으로 사용자별·슬롯별 하나만 허용됩니다.
 
@@ -411,8 +411,8 @@ Authorization: Bearer <access_token>
 
 처리:
 
-- 현재 사용자 보증금 환불
-- 같은 슬롯의 직전 반납자에게 3,000원 패널티 차감
+- 현재 사용자 보증금 포인트 반환
+- 같은 슬롯의 직전 반납자에게 3,000P 패널티 차감
 - 슬롯 `disabled` 전환
 - 현재 대여 `defect_reported` 종료
 
@@ -435,6 +435,6 @@ Authorization: Bearer <access_token>
 
 처리:
 
-- 신고자 보증금 환불 없음
+- 신고자 보증금 포인트 반환 없음
 - 슬롯 `disabled` 전환
 - 현재 대여 `self_damage_reported` 종료
