@@ -5,7 +5,7 @@ QR 코드로 캠퍼스 우산을 대여·반납하는 무인 서비스입니다.
 ## 프로젝트 정보
 
 - 최초 개발: 2026.03.02 ~ 2026.06.09
-- 개인 후속 개선: 2026.08 ~ 2026.09
+- 개인 후속 개선: 2026.08 ~ 2026.10
 - 형태: 3인 팀 캡스톤디자인 / 졸업작품
 - 주요 구성: Android · FastAPI · SQLite · Raspberry Pi
 
@@ -58,6 +58,7 @@ Android App  <-->  FastAPI Server  <-->  Raspberry Pi / Umbrella Station
 - DB 스키마 버전 관리와 주요 상태 변경의 감사 이력 추가
 - 요청 ID 기반 로그 추적과 일관된 오류 응답, 상태 점검 API 추가
 - GitHub Actions 기반 Ubuntu·Windows 서버 테스트 자동화
+- Android 앱의 빌드 유형별 HTTP 로그 설정과 디버그·릴리스 빌드 자동화
 
 ## 팀 구성
 
@@ -119,7 +120,9 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-GitHub Actions에서 Ubuntu와 Windows 환경으로 서버 테스트를 자동 실행하며, 현재 공개 저장소의 최신 CI에서 **16개 테스트가 통과**했습니다.
+GitHub Actions에서 Ubuntu와 Windows 환경으로 서버 테스트를 자동 실행하며, **16개 테스트 통과**를 확인했습니다.
+
+Android 앱은 GitHub Actions에서 디버그·릴리스 빌드를 자동 실행하며, 두 빌드 모두 성공을 확인했습니다.
 
 ## 겪었던 문제
 
