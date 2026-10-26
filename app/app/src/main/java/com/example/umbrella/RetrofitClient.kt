@@ -25,7 +25,14 @@ object RetrofitClient {
     }
 
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.BODY
+        redactHeader("Authorization")
+        redactHeader("Cookie")
+        redactHeader("Set-Cookie")
+        level = if (BuildConfig.DEBUG) {
+            HttpLoggingInterceptor.Level.BASIC
+        } else {
+            HttpLoggingInterceptor.Level.NONE
+        }
     }
 
     private val okHttpClient = OkHttpClient.Builder()
